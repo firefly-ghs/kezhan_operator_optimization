@@ -1,0 +1,38 @@
+{
+  "task": "task2_add_rmsnorm",
+  "timestamp": "2026-10-30T20:20:43",
+  "shape": {
+    "T": 8,
+    "H": 4096,
+    "dtype": "fp32"
+  },
+  "peak_bw_gbs": 14.537193492689283,
+  "device": {
+    "device": "cpu",
+    "torch": "2.9.1+cpu",
+    "triton_available": false,
+    "cuda_available": false
+  },
+  "metrics": {
+    "baseline_2kernel": {
+      "bytes_mb": 0.671744,
+      "median_ms": 0.08655000258133644,
+      "gbs": 7.761340034261932,
+      "peak_ratio": 0.5338953518204933,
+      "speedup": 1.0,
+      "cv_percent": 4.842164462052923
+    }
+  },
+  "rounds": [
+    {
+      "baseline_2kernel": 0.08878461756886771
+    },
+    {
+      "baseline_2kernel": 0.08655000258133644
+    },
+    {
+      "baseline_2kernel": 0.07917083469995609
+    }
+  ],
+  "cv_percent_max": 4.842164462052923
+}

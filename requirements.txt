@@ -1,0 +1,4 @@
+torch>=2.2
+numpy>=1.24
+# 仅 GPU 机器需要；Windows 上可改用 triton-windows
+triton>=3.0

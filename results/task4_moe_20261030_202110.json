@@ -1,0 +1,86 @@
+{
+  "task": "task4_moe",
+  "timestamp": "2026-10-30T20:21:10",
+  "config": {
+    "tokens": 128,
+    "experts": 4,
+    "top_k": 2,
+    "hidden": 512,
+    "intermediate": 1024,
+    "dtype": "fp32",
+    "block_m": 32,
+    "block_n": 128,
+    "block_k": 64
+  },
+  "per_expert_tokens": {
+    "min": 59,
+    "max": 68,
+    "avg": 64.0
+  },
+  "padding_waste_ratio": 0.25,
+  "peak_bw_gbs": 14.648252686772585,
+  "device": {
+    "device": "cpu",
+    "torch": "2.9.1+cpu",
+    "triton_available": false,
+    "cuda_available": false
+  },
+  "results": {
+    "gate_up": {
+      "bytes_mb": 18.35008,
+      "metrics": {
+        "baseline_silu": {
+          "median_ms": 3.459250001469627,
+          "gbs": 5.3046411771927895,
+          "peak_ratio": 0.3621347399326949,
+          "speedup": 1.0,
+          "cv_percent": 6.120873176748056
+        },
+        "baseline_plain": {
+          "median_ms": 3.474149969406426,
+          "gbs": 5.2818905808879615,
+          "peak_ratio": 0.36058161296313,
+          "speedup": 0.9957111903435347,
+          "cv_percent": 2.4331927077678213
+        }
+      },
+      "rounds": [
+        {
+          "baseline_silu": 3.8636499957647175,
+          "baseline_plain": 3.3666999952401966
+        },
+        {
+          "baseline_silu": 3.459250001469627,
+          "baseline_plain": 3.474149969406426
+        },
+        {
+          "baseline_silu": 3.3595999993849546,
+          "baseline_plain": 3.5735499986913055
+        }
+      ]
+    },
+    "down": {
+      "bytes_mb": 9.961472,
+      "metrics": {
+        "baseline_down": {
+          "median_ms": 1.5348500164691359,
+          "gbs": 6.49019245731644,
+          "peak_ratio": 0.4430693951079301,
+          "speedup": 1.0,
+          "cv_percent": 3.687488850521329
+        }
+      },
+      "rounds": [
+        {
+          "baseline_down": 1.439649990061298
+        },
+        {
+          "baseline_down": 1.572450011735782
+        },
+        {
+          "baseline_down": 1.5348500164691359
+        }
+      ]
+    }
+  }
+}

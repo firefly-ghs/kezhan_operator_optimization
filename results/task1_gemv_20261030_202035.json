@@ -1,0 +1,35 @@
+{
+  "task": "task1_gemv",
+  "timestamp": "2026-10-30T20:20:35",
+  "shape": {
+    "N": 4096,
+    "K": 4096,
+    "dtype": "fp32"
+  },
+  "peak_bw_gbs": 14.341894991502608,
+  "torch_baseline": {
+    "median_ms": 3.708900010678917,
+    "gbs": 18.102842300056956,
+    "peak_ratio": 1.2622350331516625,
+    "speedup": 1.0,
+    "cv_percent": 2.24232623612913
+  },
+  "rounds": [
+    {
+      "torch_baseline": 3.850400011288002
+    },
+    {
+      "torch_baseline": 3.708900010678917
+    },
+    {
+      "torch_baseline": 3.6509000055957586
+    }
+  ],
+  "device": {
+    "device": "cpu",
+    "torch": "2.9.1+cpu",
+    "triton_available": false,
+    "cuda_available": false
+  },
+  "cv_percent_max": 2.24232623612913
+}
