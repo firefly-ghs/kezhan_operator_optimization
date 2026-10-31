@@ -46,6 +46,12 @@ def _next_pow2(x: int) -> int:
     return 1 << (x - 1).bit_length()
 
 
+def _prev_pow2(x: int) -> int:
+    if x <= 1:
+        return 1
+    return 1 << (x.bit_length() - 1)
+
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="decode attention benchmark")
     p.add_argument("--contexts", type=int, nargs="+", default=None)
@@ -103,13 +109,27 @@ def main() -> int:
             if splits == 0:
                 sm = torch.cuda.get_device_properties(0).multi_processor_count
                 splits = min(32, _next_pow2(max(1, math.ceil(2 * sm / bh))))
+            # paged 路径按 page 切分；split 超过 page 数只会产生空 split
+            max_reasonable = _prev_pow2(max(1, (s + 16 - 1) // 16))
+            if splits > max_reasonable:
+                print(f"[info] splits 从 {splits} 裁剪到 {max_reasonable}（避免空 split）")
+            splits = max(1, min(splits, max_reasonable))
             kc, vc, table = pack_paged(k, v, page_size=16)
-            impls["triton_split1"] = lambda: kernels.decode_attention(q, k, v, num_splits=1)
+            impls["triton_split1"] = lambda: kernels.decode_attention(
+                q, k, v, num_splits=1, validate=False
+            )
             impls[f"triton_split{splits}"] = lambda: kernels.decode_attention(
-                q, k, v, num_splits=splits
+                q, k, v, num_splits=splits, validate=False
             )
             impls[f"paged_split{splits}"] = lambda: kernels.decode_attention(
-                q, kc, vc, page_table=table, seq_len=s, page_size=16, num_splits=splits
+                q,
+                kc,
+                vc,
+                page_table=table,
+                seq_len=s,
+                page_size=16,
+                num_splits=splits,
+                validate=False,
             )
             print(f"num_splits={splits}")
         else:

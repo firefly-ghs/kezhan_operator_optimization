@@ -248,6 +248,12 @@ def _is_pow2(x: int) -> bool:
     return x > 0 and (x & (x - 1)) == 0
 
 
+def _prev_pow2(x: int) -> int:
+    if x <= 1:
+        return 1
+    return 1 << (x.bit_length() - 1)
+
+
 def decode_attention(
     q: torch.Tensor,
     k_cache: torch.Tensor,
@@ -257,6 +263,7 @@ def decode_attention(
     page_size: int = 16,
     num_splits: int = 1,
     block_s: int = 64,
+    validate: bool = True,
 ) -> torch.Tensor:
     """单 token decode attention。
 
@@ -269,27 +276,80 @@ def decode_attention(
         block_s: dense 路径的 token block 大小
     """
     _check_available()
-    if q.dim() != 3:
-        raise ValueError("q 必须是 [B, HQ, D]")
+    if num_splits <= 0:
+        raise ValueError("num_splits 必须 > 0")
     if not _is_pow2(num_splits):
         raise ValueError("num_splits 必须是 2 的幂")
-    if not q.is_contiguous():
-        raise ValueError("q 必须是 contiguous")
+    if block_s <= 0:
+        raise ValueError("block_s 必须 > 0")
+    if validate:
+        if q.dim() != 3:
+            raise ValueError("q 必须是 [B, HQ, D]")
+        if not q.is_contiguous():
+            raise ValueError("q 必须是 contiguous")
+        if q.device != k_cache.device or q.device != v_cache.device:
+            raise ValueError("q / k_cache / v_cache 必须在同一 device")
+        if k_cache.dtype != q.dtype or v_cache.dtype != q.dtype:
+            raise ValueError("k_cache / v_cache 的 dtype 必须与 q 一致")
+        if not (k_cache.is_contiguous() and v_cache.is_contiguous()):
+            raise ValueError("k_cache / v_cache 必须是 contiguous")
 
     b, hq, d = q.shape
     paged = page_table is not None
-    hkv = k_cache.shape[2]
-    if hq % hkv != 0:
-        raise ValueError(f"HQ={hq} 不能被 HKV={hkv} 整除")
 
     if paged:
+        if validate:
+            if k_cache.dim() != 4 or v_cache.dim() != 4:
+                raise ValueError("paged KV 需要 k/v 形状 [num_pages, page_size, HKV, D]")
+            if k_cache.shape != v_cache.shape:
+                raise ValueError("k_cache 与 v_cache 形状必须一致")
+            if k_cache.shape[1] != page_size:
+                raise ValueError("k_cache/v_cache 的第 2 维必须等于 page_size")
+            if k_cache.shape[3] != d:
+                raise ValueError("paged KV 的 head_dim 必须与 q 的 D 一致")
+        hkv = k_cache.shape[2]
+
         if seq_len is None:
             raise ValueError("paged KV 必须显式传入 seq_len")
         s = int(seq_len)
-        if not _is_pow2(page_size):
-            raise ValueError("page_size 必须是 2 的幂")
+        if s < 0:
+            raise ValueError("seq_len 必须 >= 0")
+        if validate:
+            if not _is_pow2(page_size):
+                raise ValueError("page_size 必须是 2 的幂")
+
+            if page_table is None or page_table.dim() != 2 or page_table.shape[0] != b:
+                raise ValueError("page_table 必须是 [B, max_pages]")
+            if page_table.device != q.device:
+                raise ValueError("page_table 必须与 q 在同一 device")
+            if page_table.dtype not in (torch.int32, torch.int64):
+                raise ValueError("page_table 必须是 int32 或 int64")
+            if not page_table.is_contiguous():
+                raise ValueError("page_table 必须是 contiguous")
+
+        needed_pages = (s + page_size - 1) // page_size
+        if validate and page_table.shape[1] < needed_pages:
+            raise ValueError("page_table 的 max_pages 不足以覆盖 seq_len")
+        max_splits = _prev_pow2(max(1, needed_pages))
     else:
+        if validate:
+            if k_cache.dim() != 4 or v_cache.dim() != 4:
+                raise ValueError("dense KV 需要 k/v 形状 [B, S, HKV, D]")
+            if k_cache.shape != v_cache.shape:
+                raise ValueError("k_cache 与 v_cache 形状必须一致")
+            if k_cache.shape[0] != b:
+                raise ValueError("dense KV 的 batch 维必须与 q 一致")
+            if k_cache.shape[3] != d:
+                raise ValueError("dense KV 的 head_dim 必须与 q 的 D 一致")
+        hkv = k_cache.shape[2]
         s = int(k_cache.shape[1])
+        max_splits = _prev_pow2(max(1, s))
+
+    if validate and hq % hkv != 0:
+        raise ValueError(f"HQ={hq} 不能被 HKV={hkv} 整除")
+
+    # 限制 split 到有效范围，避免 dense/paged 路径空 split 浪费
+    num_splits = _prev_pow2(max(1, min(num_splits, max_splits)))
 
     if s == 0:
         return torch.zeros_like(q)
@@ -304,6 +364,7 @@ def decode_attention(
     scale = 1.0 / math.sqrt(d)
     group = hq // hkv
     grid = (bh, num_splits)
+    num_warps = 4 if block_d <= 128 else 8
 
     if paged:
         _decode_attn_paged_kernel[grid](
@@ -328,7 +389,7 @@ def decode_attention(
             PAGE_SIZE=page_size,
             BLOCK_D=block_d,
             NUM_SPLITS=num_splits,
-            num_warps=4,
+            num_warps=num_warps,
         )
     else:
         _decode_attn_contig_kernel[grid](
@@ -351,7 +412,7 @@ def decode_attention(
             BLOCK_S=block_s,
             BLOCK_D=block_d,
             NUM_SPLITS=num_splits,
-            num_warps=4,
+            num_warps=num_warps,
         )
 
     _combine_kernel[(bh,)](
@@ -365,6 +426,6 @@ def decode_attention(
         out.stride(1),
         NUM_SPLITS=num_splits,
         BLOCK_D=block_d,
-        num_warps=4,
+        num_warps=num_warps,
     )
     return out

@@ -166,6 +166,8 @@ def _worker(rank: int, world: int, cfg: dict, init_uri: str) -> None:
 
             dist.barrier()
             use_tri = mode in ("allreduce_triton", "chunked_overlap", "p2p_reduce") and use_triton
+            if rank == 0 and mode in ("chunked_overlap", "p2p_reduce") and not use_tri:
+                print(f"[info] {mode} 在当前环境回退为 torch.mm 本地计算")
             out_dtype = torch.float32 if use_tri else dtype
             out = torch.empty(t, h, dtype=out_dtype, device=device)
 
@@ -188,18 +190,18 @@ def _worker(rank: int, world: int, cfg: dict, init_uri: str) -> None:
 
                 check_out, check_ref = out, ref_k
             elif mode == "chunked_overlap":
-                local = lambda: _local(x_shard, w_shard, out, True)
+                local = lambda: _local(x_shard, w_shard, out, use_tri)
                 scratch = torch.empty_like(out)
                 comm = lambda: dist.all_reduce(scratch, op=dist.ReduceOp.SUM)
-                total = lambda: _local_chunked(x_shard, w_shard, out, True, cfg["chunks"])
+                total = lambda: _local_chunked(x_shard, w_shard, out, use_tri, cfg["chunks"])
                 check_out, check_ref = out, ref_k
             elif mode == "p2p_reduce":
-                local = lambda: _local(x_shard, w_shard, out, True)
+                local = lambda: _local(x_shard, w_shard, out, use_tri)
                 scratch = torch.empty_like(out)
                 comm = lambda: _p2p_sum(scratch)
 
                 def total():
-                    _local(x_shard, w_shard, out, True)
+                    _local(x_shard, w_shard, out, use_tri)
                     _p2p_sum(out)
 
                 check_out, check_ref = out, ref_k

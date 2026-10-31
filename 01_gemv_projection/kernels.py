@@ -36,7 +36,7 @@ if _HAS_TRITON:
         """v0：每个 program 处理 1 行，沿 K 循环，寄存器内累加。"""
         row = tl.program_id(0)
         offs_k = tl.arange(0, BLOCK_K)
-        acc = tl.zeros((BLOCK_K,), dtype=tl.float32)
+        acc = tl.zeros((), dtype=tl.float32)
         for k0 in range(0, K, BLOCK_K):
             k = k0 + offs_k
             mask_k = k < K
@@ -44,9 +44,8 @@ if _HAS_TRITON:
                 W + row * stride_wn + k * stride_wk, mask=mask_k, other=0.0
             )
             x = tl.load(X + k, mask=mask_k, other=0.0)
-            acc += w.to(tl.float32) * x.to(tl.float32)
-        total = tl.sum(acc, axis=0)
-        tl.store(Y + row, total.to(Y.dtype.element_ty))
+            acc += tl.sum(w.to(tl.float32) * x.to(tl.float32), axis=0)
+        tl.store(Y + row, acc.to(Y.dtype.element_ty))
 
     @triton.jit
     def _gemv_tiled_kernel(
@@ -149,10 +148,22 @@ def _check_inputs(W: torch.Tensor, x: torch.Tensor) -> None:
         raise ValueError("W 与 x 必须是 contiguous")
 
 
+def _check_block_params(block_n: int | None = None, block_k: int | None = None) -> None:
+    if block_n is not None and block_n <= 0:
+        raise ValueError("block_n 必须 > 0")
+    if block_k is not None:
+        if block_k <= 0:
+            raise ValueError("block_k 必须 > 0")
+        # fp16/bf16 向量化常见对齐要求；也避免极小 tile 导致 launch 噪声占主导
+        if block_k % 8 != 0:
+            raise ValueError("block_k 建议为 8 的倍数")
+
+
 def gemv_naive(W: torch.Tensor, x: torch.Tensor, block_k: int = 256) -> torch.Tensor:
     """v0：一行一 program。"""
     _check_available()
     _check_inputs(W, x)
+    _check_block_params(block_k=block_k)
     n, k = W.shape
     y = torch.empty(n, dtype=W.dtype, device=W.device)
     _gemv_naive_kernel[(n,)](
@@ -178,6 +189,9 @@ def gemv_tiled(
     """v1：BLOCK_N 行一 program，复用 x tile。"""
     _check_available()
     _check_inputs(W, x)
+    _check_block_params(block_n=block_n, block_k=block_k)
+    if num_warps <= 0:
+        raise ValueError("num_warps 必须 > 0")
     n, k = W.shape
     y = torch.empty(n, dtype=W.dtype, device=W.device)
     grid = (triton.cdiv(n, block_n),)
@@ -207,7 +221,14 @@ def gemv_splitk(
     """v2：split-K + fp32 partial reduce。"""
     _check_available()
     _check_inputs(W, x)
+    _check_block_params(block_n=block_n, block_k=block_k)
+    if num_warps <= 0:
+        raise ValueError("num_warps 必须 > 0")
     n, k = W.shape
+    if split_k <= 0:
+        raise ValueError("split_k 必须 > 0")
+    # split 数量超过 K 没有意义，会带来额外 partial 流量与 launch 开销
+    split_k = min(split_k, k)
     y = torch.empty(n, dtype=W.dtype, device=W.device)
     partial = torch.empty((split_k, n), dtype=torch.float32, device=W.device)
     grid = (triton.cdiv(n, block_n), split_k)
